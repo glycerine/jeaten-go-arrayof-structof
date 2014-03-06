@@ -1157,6 +1157,7 @@ ok:
 		case TARRAY:
 		case TCHAN:
 		case TMAP:
+		case TSTRUCT:
 			slink = typelinksym(t);
 			dsymptr(slink, 0, s, 0);
 			ggloblsym(slink, widthptr, dupok, 1);

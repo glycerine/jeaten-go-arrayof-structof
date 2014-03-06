@@ -1366,7 +1366,7 @@ func typesByString(s string) []*rtype {
 // The lookupCache caches ChanOf, MapOf, and SliceOf lookups.
 var lookupCache struct {
 	sync.RWMutex
-	m map[cacheKey]*rtype
+	m map[cacheKey][]*rtype
 }
 
 // A cacheKey is the key for use in the lookupCache.
@@ -1383,23 +1383,32 @@ type cacheKey struct {
 // If it finds one, it returns that type.
 // If not, it returns nil with the cache locked.
 // The caller is expected to use cachePut to unlock the cache.
-func cacheGet(k cacheKey) Type {
+func cacheGet(k cacheKey) *rtype {
+	if ts := cacheGets(k); ts != nil {
+		return ts[0]
+	}
+	return nil
+}
+
+// cacheGets looks for all types under the key k in the lookupCache.
+// Used only by StructOf which uses keys that could potentially collide.
+func cacheGets(k cacheKey) []*rtype {
 	lookupCache.RLock()
-	t := lookupCache.m[k]
+	ts := lookupCache.m[k]
 	lookupCache.RUnlock()
-	if t != nil {
-		return t
+	if ts != nil {
+		return ts
 	}
 
 	lookupCache.Lock()
-	t = lookupCache.m[k]
-	if t != nil {
+	ts = lookupCache.m[k]
+	if ts != nil {
 		lookupCache.Unlock()
-		return t
+		return ts
 	}
 
 	if lookupCache.m == nil {
-		lookupCache.m = make(map[cacheKey]*rtype)
+		lookupCache.m = make(map[cacheKey][]*rtype)
 	}
 
 	return nil
@@ -1409,7 +1418,7 @@ func cacheGet(k cacheKey) Type {
 // and returns the type. It is expected that the cache is locked
 // because cacheGet returned nil.
 func cachePut(k cacheKey, t *rtype) Type {
-	lookupCache.m[k] = t
+	lookupCache.m[k] = append(lookupCache.m[k], t)
 	lookupCache.Unlock()
 	return t
 }
@@ -1740,6 +1749,169 @@ func SliceOf(t Type) Type {
 	return cachePut(ckey, &slice.rtype)
 }
 
+
+// StructOf returns the struct type containing fields. Field offsets are ignored
+// and computed as they would be by the compiler.
+func StructOf(fields []StructField) Type {
+	hash := fnv1(0, []byte("empty")...)
+
+	// There are serveral conditions that need to be tracked:
+	// 1. allComparable: if the struct contains a non-comparable field, this struct
+	//    must also be non-comparable
+	// 2. hasPointers: used as a hint to the GC
+	// 3. allMemalg: Can this struct be hashed and compared by hashing/comparing
+	//    its memory alone. Only relevant if struct is comparible.
+	var size uintptr
+	var align uint8
+	var allComparable bool = true
+	var hasPointers bool = false
+	var allMemalg bool = true
+
+	fs := make([]structField, len(fields))
+	str := "struct {"
+	for i := range fields {
+		f := runtimeStructField(fields[i])
+
+		// Update string and hash
+		if f.name != nil {
+			hash = fnv1(hash, []byte(*f.name)...)
+			str += " " + *f.name
+		}
+		hash = fnv1(hash, []byte(*f.typ.string)...)
+		str += " " + *f.typ.string
+		if f.tag != nil {
+			hash = fnv1(hash, []byte(*f.tag)...)
+			str += " " + strconv.Quote(*f.tag)
+		}
+		if i < len(fields) - 1 {
+			str += ";"
+		}
+
+		// Compute field offset
+		f.offset = rndup(size, f.typ.align)
+
+		k := f.typ.Kind()
+		allComparable = allComparable && comparable(f.typ)
+		hasPointers = hasPointers || !allComparable || k == Chan ||
+			k == Interface || k == Ptr || k == String || k == UnsafePointer ||
+			(k == Struct && f.typ.kind&kindNoPointers != 0)
+
+		// If there are unused bytes in the struct, either in padding or "_",
+		// direct memory comparison cannot be used.
+		allMemalg = allMemalg && allComparable && f.offset == size && *f.name != "_" && memalg(f.typ)
+
+		// update alignment
+		if f.typ.align > align {
+			align = f.typ.align
+		}
+		size = f.offset + f.typ.size
+
+		fs[i] = f
+	}
+	str += " }"
+
+	// Round the size up to be a multiple of the alignment.
+	size2 := rndup(size, align)
+	allMemalg = allMemalg && size == size2
+
+	// Make the struct type.
+	var istruc interface{} = struct{}{}
+	prototype := *(**structType)(unsafe.Pointer(&istruc))
+	struc := new(structType)
+	*struc = *prototype
+	struc.fields = fs
+
+	// Create a key, there is possibility of a hash collision here.
+	k := cacheKey{Struct, nil, nil, uintptr(hash)}
+	switch len(fs) {
+	case 2:
+		k.t1 = fs[1].typ
+		fallthrough
+	case 1:
+		k.t2 = fs[0].typ
+	}
+
+	// Look in the cache.
+	for _, tt := range cacheGets(k) {
+		if haveIdenticalUnderlyingType(&struc.rtype, tt) {
+			return tt
+		}
+	}
+
+	// Look in known types.
+	for _, tt := range typesByString(str) {
+		if haveIdenticalUnderlyingType(&struc.rtype, tt) {
+			return cachePut(k, tt)
+		}
+	}
+
+	struc.string = &str
+	struc.hash = hash
+	struc.size = size2
+	struc.align = align
+	struc.fieldAlign = align
+	struc.uncommonType = nil
+	struc.zero = unsafe.Pointer(&make([]byte, size2)[0])
+
+	// ptrToThis must be nil for a new pointer type to be synthesised.
+	struc.ptrToThis = nil
+	struc.ptrToThis = struc.rtype.ptrTo()
+
+	if hasPointers {
+		struc.kind &^= kindNoPointers
+	} else {
+		struc.kind |= kindNoPointers
+	}
+
+	gc := []uintptr{size2}
+	for i := range fs {
+		if fs[i].typ.gc != nil {
+			end := len(gc)
+			gc = appendGCProgram(gc, fs[i].typ)
+			// All gc ops take offset as the first argument, unless they are argumentless
+			if len(gc) > end + 1 {
+				gc[end+1] = fs[i].offset
+			}
+		}
+	}
+	gc = append(gc, _GC_END)
+	struc.gc = unsafe.Pointer(&gc[0])
+	struc.alg = algForType(&struc.rtype, allComparable, allMemalg)
+
+	// INCORRECT. Uncomment to check that TestStructOfGC fails when slice.gc is wrong.
+	//struc.gc = unsafe.Pointer(&badGC{width: struc.size2, end: _GC_END})
+	// INCORRECT. Uncomment to check that TestStructOfCustomAlg fails when alg is wrong.
+	//struc.alg = algForType(&struc.rtype, allComparable, true)
+
+	return cachePut(k, &struc.rtype)
+}
+
+// assumes align has exactly one bit set
+func rndup(offset uintptr, align uint8) uintptr {
+	a := uintptr(align) - 1
+	return (offset+a)&^a
+}
+
+func runtimeStructField(field StructField) structField {
+	return structField{
+		name: strPtrOrNil(field.Name),
+		pkgPath: strPtrOrNil(field.PkgPath),
+		typ: field.Type.(*rtype),
+		tag: strPtrOrNil(string(field.Tag)),
+		offset: field.Offset,
+	}
+}
+
+func strPtrOrNil(str string) *string {
+	if str == "" {
+		return nil
+	}
+	ret := new(string)
+	*ret = str
+	return ret
+}
+
+
 // ArrayOf returns the array type with the given count and element type.
 // For example, if t represents int, ArrayOf(5, t) represents [5]int.
 //
@@ -1805,7 +1977,7 @@ func ArrayOf(count int, elem Type) Type {
 	// INCORRECT. Uncomment to check that TestArrayOfGC fails when slice.gc is wrong.
 	//array.gc = unsafe.Pointer(&badGC{width: 0, end: _GC_END})
 	// INCORRECT. Uncomment to check that TestArrayOfCustomAlg fails when alg is wrong.
-	//array.alg = algForMemType(&array.rtype, compare, true)
+	//array.alg = algForType(&array.rtype, compare, true)
 
 	return cachePut(ckey, &array.rtype)
 }
