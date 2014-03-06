@@ -6,6 +6,10 @@
 
 package runtime
 
+import (
+	"unsafe"
+)
+
 var Fadd64 = fadd64
 var Fsub64 = fsub64
 var Fmul64 = fmul64
@@ -90,3 +94,9 @@ var MemclrBytes = memclrBytes
 func gogoBytes() int32
 
 var GogoBytes = gogoBytes
+
+func genericEq(data1, data2, typ unsafe.Pointer) bool
+func genericHash(data, typ unsafe.Pointer) uintptr
+
+var GenericEq = genericEq
+var GenericHash = genericHash

@@ -5,6 +5,7 @@
 package runtime
 #include "runtime.h"
 #include "type.h"
+#include "typekind.h"
 #include "../../cmd/ld/textflag.h"
 
 #define M0 (sizeof(uintptr)==4 ? 2860486313UL : 33054211828000289ULL)
@@ -435,6 +436,98 @@ runtime·noequal(bool *eq, uintptr s, void *a, void *b)
 	runtime·panicstring("comparing uncomparable types");
 }
 
+static void
+generichash(uintptr *h, void *data, Type *t)
+{
+	Eface err;
+	uintptr i, offset, stride;
+	ArrayType *a;
+	StructType *s;
+	StructField *f;
+
+	switch(t->kind & ~KindNoPointers) {
+	default:
+		runtime·newErrorString(runtime·catstring(runtime·gostringnocopy((byte*)"generichash not required for "), *t->string), &err);
+		runtime·panic(err);
+
+	case KindArray:
+		a = (ArrayType *)t;
+		stride = ROUND(a->elem->size, a->elem->align);
+		for(i = 0, offset = 0; i < a->len; i++, offset += stride)
+			runtime·alghash(h, ((byte *)data)+offset, a->elem);
+		break;
+
+	case KindStruct:
+		s = (StructType *)t;
+		f = (StructField *)s->fields.array;
+		for(i = 0; i < s->fields.len; i++, f++) {
+			// skip field.name == "_", but should still panic on unhashable fields
+			if(f->typ->alg->hash != runtime·nohash && f->name->len == 1 && f->name->str[0] == '_')
+				continue;
+
+			offset = f->offset;
+			runtime·alghash(h, ((byte *)data)+offset, f->typ);
+		}
+		break;
+	}
+}
+
+static void
+genericeq(bool *eq, void *data1, void *data2, Type *t)
+{
+	Eface err;
+	uintptr i, offset, stride;
+	ArrayType *a;
+	StructType *s;
+	StructField *f;
+
+	switch(t->kind & ~KindNoPointers) {
+	default:
+		runtime·newErrorString(runtime·catstring(runtime·gostringnocopy((byte*)"genericeq not required for "), *t->string), &err);
+		runtime·panic(err);
+
+	case KindArray:
+		a = (ArrayType *)t;
+		stride = ROUND(a->elem->size, a->elem->align);
+		*eq = 1;
+		for(i = 0, offset = 0; *eq && i < a->len; i++, offset += stride)
+			runtime·algequal(eq, ((byte *)data1)+offset, ((byte *)data2)+offset, a->elem);
+		break;
+
+	case KindStruct:
+		s = (StructType *)t;
+		f = (StructField *)s->fields.array;
+		*eq = 1;
+		for(i = 0; *eq && i < s->fields.len; i++, f++) {
+			// skip field.name == "_", but should still panic on uncomparable fields
+			if(f->typ->alg->hash != runtime·nohash && f->name->len == 1 && f->name->str[0] == '_')
+				continue;
+
+			offset = f->offset;
+			runtime·algequal(eq, ((byte *)data1)+offset, ((byte *)data2)+offset, f->typ);
+		}
+		break;
+	}
+}
+
+void
+runtime·algequal(bool *eq, void *data1, void *data2, Type *t) {
+	if(t->alg->equal != nil) {
+		t->alg->equal(eq, t->size, data1, data2);
+	} else {
+		genericeq(eq, data1, data2, t);
+	}
+}
+
+void
+runtime·alghash(uintptr *h, void *data, Type *t) {
+	if(t->alg->hash != nil) {
+		t->alg->hash(h, t->size, data);
+	} else {
+		generichash(h, data, t);
+	}
+}
+
 Alg
 runtime·algarray[] =
 {
@@ -461,6 +554,10 @@ runtime·algarray[] =
 [ANOEQ64]	{ runtime·nohash, runtime·noequal, runtime·memprint, runtime·memcopy64 },
 [ANOEQ128]	{ runtime·nohash, runtime·noequal, runtime·memprint, runtime·memcopy128 },
 };
+
+func reflect·alg(i int) (ret *Alg) {
+	ret = runtime·algarray + i;
+}
 
 // Runtime helpers.
 
@@ -542,4 +639,14 @@ func int32Hash(i uint32, seed uintptr) (res uintptr) {
 func int64Hash(i uint64, seed uintptr) (res uintptr) {
 	runtime·algarray[AMEM64].hash(&seed, sizeof(uint64), &i);
 	res = seed;
+}
+
+// Testing adapters for generic algs
+func runtime·genericEq(data1 *uintptr, data2 *uintptr, t *Type) (eq bool) {
+	genericeq(&eq, data1, data2, t);
+}
+
+func runtime·genericHash(data *uintptr, t *Type) (hash uintptr) {
+	hash = 0;
+	generichash(&hash, data, t);
 }

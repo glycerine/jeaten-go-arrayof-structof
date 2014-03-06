@@ -473,9 +473,9 @@ ifacehash1(void *data, Type *t, uintptr h)
 		runtime·panic(err);
 	}
 	if(size <= sizeof(data))
-		alg->hash(&h, size, &data);
+		runtime·alghash(&h, &data, t);
 	else
-		alg->hash(&h, size, data);
+		runtime·alghash(&h, data, t);
 	return h;
 }
 
@@ -513,9 +513,9 @@ ifaceeq1(void *data1, void *data2, Type *t)
 
 	eq = 0;
 	if(size <= sizeof(data1))
-		alg->equal(&eq, size, &data1, &data2);
+		runtime·algequal(&eq, &data1, &data2, t);
 	else
-		alg->equal(&eq, size, data1, data2);
+		runtime·algequal(&eq, data1, data2, t);
 	return eq;
 }
 
