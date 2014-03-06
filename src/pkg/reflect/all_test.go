@@ -3232,7 +3232,7 @@ func TestArrayOfAlg(t *testing.T) {
 	shouldPanic(func() { _ = v1.Interface() == v1.Interface() })
 }
 
-func TestArrayOfCustomAlg(t *testing.T) {
+func TestArrayOfGenericAlg(t *testing.T) {
 	at1 := ArrayOf(5, TypeOf(string("")))
 	at := ArrayOf(6, at1)
 	v1 := New(at).Elem()
@@ -3256,11 +3256,10 @@ func TestArrayOfCustomAlg(t *testing.T) {
 	// Test hash
 	m := MakeMap(MapOf(at, TypeOf(int(0))))
 	m.SetMapIndex(v1, ValueOf(1))
-	if i1, i2 := v1.Interface(), v2.Interface(); m.MapIndex(v2).Interface() != 1 {
+	if i1, i2 := v1.Interface(), v2.Interface(); !m.MapIndex(v2).IsValid() {
 		t.Errorf("constructed arrays %v and %v have different hashes", i1, i2)
 	}
 }
-
 
 func TestSliceOf(t *testing.T) {
 	// check construction and use of type not in binary
@@ -3494,6 +3493,144 @@ func TestMapOfGCValues(t *testing.T) {
 				t.Errorf("lost x[%d][%d] = %d, want %d", i, j, k, i*n+j)
 			}
 		}
+	}
+}
+
+func TestStructOf(t *testing.T) {
+	// check construction and use of type not in binary
+	fields := []StructField{
+		StructField{
+			Name: "X",
+			Tag: "x",
+			Type: TypeOf(byte(0)),
+		},
+		StructField{
+			Name: "Y",
+			Type: TypeOf(uint64(0)),
+		},
+		StructField{
+			Name: "Z",
+			Type: TypeOf([3]uint16{}),
+		},
+	}
+
+	st := StructOf(fields)
+	v := New(st).Elem()
+	runtime.GC()
+	v.FieldByName("X").Set(ValueOf(byte(1)))
+	runtime.GC()
+
+	s := fmt.Sprint(v.Interface())
+	want := `{1 0 [0 0 0]}`
+	if s != want {
+		t.Errorf("constructed struct = %s, want %s", s, want)
+	}
+
+	// check the size, alignment and field offsets
+	stt := TypeOf(struct{X byte; Y uint64; Z [3]uint16}{})
+	if st.Size() != stt.Size() {
+		t.Errorf("constructed struct size = %v, want %v", st.Size(), stt.Size())
+	}
+	if st.Align() != stt.Align() {
+		t.Errorf("constructed struct align = %v, want %v", st.Align(), stt.Align())
+	}
+	if st.FieldAlign() != stt.FieldAlign() {
+		t.Errorf("constructed struct field align = %v, want %v", st.FieldAlign(), stt.FieldAlign())
+	}
+	for i := 0; i < st.NumField(); i += 1 {
+		if o1, o2 := st.Field(i).Offset, stt.Field(i).Offset; o1 != o2 {
+			t.Errorf("constructed struct field %v offset = %v, want %v", i, o1, o2)
+		}
+	}
+
+	// check that type already in binary is found
+	checkSameType(t, Zero(StructOf(fields[1:2])).Interface(), struct{Y uint64}{})
+}
+
+func TestStructOfGC(t *testing.T) {
+	type T *uintptr
+	tt := TypeOf(T(nil))
+	fields := []StructField{
+		{Name: "X", Type: TypeOf(T(nil))},
+		{Name: "Y", Type: TypeOf(T(nil))},
+	}
+	st := StructOf(fields)
+
+	const n = 10000
+	var x []interface{}
+	for i := 0; i < n; i++ {
+		v := New(st).Elem()
+		for j := 0; j < v.NumField(); j += 1 {
+			p := new(uintptr)
+			*p = uintptr(i*n+j)
+			v.Field(j).Set(ValueOf(p).Convert(tt))
+		}
+		x = append(x, v.Interface())
+	}
+	runtime.GC()
+
+	for i, xi := range x {
+		v := ValueOf(xi)
+		for j := 0; j < v.NumField(); j += 1 {
+			k := v.Field(j).Elem().Interface()
+			if k != uintptr(i*n+j) {
+				t.Errorf("lost x[%d]%c = %d, want %d", i, "XY"[j], k, i*n+j)
+			}
+		}
+	}
+}
+
+func TestStructOfAlg(t *testing.T) {
+	st := StructOf([]StructField{{Name: "X", Tag: "x", Type: TypeOf(int(0))}})
+	v1 := New(st).Elem()
+	v2 := New(st).Elem()
+	if v1.Interface() != v1.Interface() {
+		t.Errorf("constructed struct %v not equal to itself", v1.Interface())
+	}
+	v1.FieldByName("X").Set(ValueOf(int(1)))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 == i2 {
+		t.Errorf("constructed structs %v and %v should not be equal", i1, i2)
+	}
+
+	st = StructOf([]StructField{{Name: "X", Tag: "x", Type: TypeOf([]int(nil))}})
+	v1 = New(st).Elem()
+	shouldPanic(func() { _ = v1.Interface() == v1.Interface() })
+}
+
+func TestStructOfGenericAlg(t *testing.T) {
+	st1 := StructOf([]StructField{
+		{Name: "X", Tag: "x", Type: TypeOf(int(0))},
+		{Name: "Y", Type: TypeOf(string(""))},
+	})
+	st := StructOf([]StructField{
+		{Name: "S", Type: st1},
+	})
+
+	v1 := New(st).Elem()
+	v2 := New(st).Elem()
+
+	if v1.Interface() != v1.Interface() {
+		t.Errorf("constructed struct %v not equal to itself", v1.Interface())
+	}
+
+	v1.FieldByName("S").FieldByName("Y").Set(ValueOf("abc"))
+	v2.FieldByName("S").FieldByName("Y").Set(ValueOf("def"))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 == i2 {
+		t.Errorf("constructed structs %v and %v should not be equal", i1, i2)
+	}
+
+	abc := "abc"
+	v1.FieldByName("S").FieldByName("Y").Set(ValueOf(abc))
+	v2.FieldByName("S").FieldByName("Y").Set(ValueOf((abc+" ")[:3]))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 != i2 {
+		t.Errorf("constructed structs %v and %v should be equal", i1, i2)
+	}
+
+	// Test hash
+	m := MakeMap(MapOf(st, TypeOf(int(0))))
+	m.SetMapIndex(v1, ValueOf(1))
+	if i1, i2 := v1.Interface(), v2.Interface(); !m.MapIndex(v2).IsValid() {
+		t.Errorf("constructed arrays %v and %v have different hashes", i1, i2)
 	}
 }
 
