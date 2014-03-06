@@ -41,11 +41,11 @@ check(MapType *t, Hmap *h)
 				if(b->tophash[i] > Empty && b->tophash[i] < MinTopHash)
 					runtime·throw("evacuated cell in buckets");
 				cnt++;
-				t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+				runtime·algequal(&eq, IK(h, k), IK(h, k), t->key);
 				if(!eq)
 					continue; // NaN!
 				hash = h->hash0;
-				t->key->alg->hash(&hash, t->key->size, IK(h, k));
+				runtime·alghash(&hash, IK(h, k), t->key);
 				top = hash >> (8*sizeof(uintptr) - 8);
 				if(top < MinTopHash)
 					top += MinTopHash;
@@ -66,11 +66,11 @@ check(MapType *t, Hmap *h)
 					if(oldbucket < h->nevacuate)
 						runtime·throw("unevacuated entry in an evacuated bucket");
 					cnt++;
-					t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+					runtime·algequal(&eq, IK(h, k), IK(h, k), t->key);
 					if(!eq)
 						continue; // NaN!
 					hash = h->hash0;
-					t->key->alg->hash(&hash, t->key->size, IK(h, k));
+					runtime·alghash(&hash, IK(h, k), t->key);
 					top = hash >> (8*sizeof(uintptr) - 8);
 					if(top < MinTopHash)
 						top += MinTopHash;
@@ -207,9 +207,9 @@ evacuate(MapType *t, Hmap *h, uintptr oldbucket)
 				// Compute hash to make our evacuation decision (whether we need
 				// to send this key/value to bucket x or bucket y).
 				hash = h->hash0;
-				t->key->alg->hash(&hash, t->key->size, IK(h, k));
+				runtime·alghash(&hash, IK(h, k), t->key);
 				if((h->flags & Iterator) != 0) {
-					t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+					runtime·algequal(&eq, IK(h, k), IK(h, k), t->key);
 					if(!eq) {
 						// If key != key (NaNs), then the hash could be (and probably
 						// will be) entirely different from the old hash.  Moreover,
@@ -371,7 +371,7 @@ hash_lookup(MapType *t, Hmap *h, byte **keyp)
 	if(h->count == 0)
 		return nil;
 	hash = h->hash0;
-	t->key->alg->hash(&hash, t->key->size, key);
+	runtime·alghash(&hash,  key, t->key);
 	bucket = hash & (((uintptr)1 << h->B) - 1);
 	if(h->oldbuckets != nil) {
 		oldbucket = bucket & (((uintptr)1 << (h->B - 1)) - 1);
@@ -389,7 +389,7 @@ hash_lookup(MapType *t, Hmap *h, byte **keyp)
 		for(i = 0, k = (byte*)b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
 			if(b->tophash[i] == top) {
 				k2 = IK(h, k);
-				t->key->alg->equal(&eq, t->key->size, key, k2);
+				runtime·algequal(&eq, key, k2, t->key);
 				if(eq) {
 					*keyp = k2;
 					return IV(h, v);
@@ -489,7 +489,7 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 	if(docheck)
 		check(t, h);
 	hash = h->hash0;
-	t->key->alg->hash(&hash, t->key->size, key);
+	runtime·alghash(&hash,  key, t->key);
 	if(h->buckets == nil)
 		h->buckets = runtime·cnewarray(t->bucket, 1);
 
@@ -514,7 +514,7 @@ hash_insert(MapType *t, Hmap *h, void *key, void *value)
 				}
 				continue;
 			}
-			t->key->alg->equal(&eq, t->key->size, key, IK(h, k));
+			runtime·algequal(&eq,  key, IK(h,  k), t->key);
 			if(!eq)
 				continue;
 			// already have a mapping for key.  Update it.
@@ -582,7 +582,7 @@ hash_remove(MapType *t, Hmap *h, void *key)
 	if(h->count == 0)
 		return;
 	hash = h->hash0;
-	t->key->alg->hash(&hash, t->key->size, key);
+	runtime·alghash(&hash,  key, t->key);
 	bucket = hash & (((uintptr)1 << h->B) - 1);
 	if(h->oldbuckets != nil)
 		grow_work(t, h, bucket);
@@ -594,7 +594,7 @@ hash_remove(MapType *t, Hmap *h, void *key)
 		for(i = 0, k = (byte*)b->data, v = k + h->keysize * BUCKETSIZE; i < BUCKETSIZE; i++, k += h->keysize, v += h->valuesize) {
 			if(b->tophash[i] != top)
 				continue;
-			t->key->alg->equal(&eq, t->key->size, key, IK(h, k));
+			runtime·algequal(&eq,  key, IK(h,  k), t->key);
 			if(!eq)
 				continue;
 
@@ -734,12 +734,12 @@ next:
 				// through the oldbucket, skipping any keys that will go
 				// to the other new bucket (each oldbucket expands to two
 				// buckets during a grow).
-				t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+				runtime·algequal(&eq, IK(h, k), IK(h, k), t->key);
 				if(eq) {
 					// If the item in the oldbucket is not destined for
 					// the current new bucket in the iteration, skip it.
 					hash = h->hash0;
-					t->key->alg->hash(&hash, t->key->size, IK(h, k));
+					runtime·alghash(&hash, IK(h, k), t->key);
 					if((hash & (((uintptr)1 << it->B) - 1)) != check_bucket) {
 						continue;
 					}
@@ -763,7 +763,7 @@ next:
 			} else {
 				// The hash table has grown since the iterator was started.
 				// The golden data for this key is now somewhere else.
-				t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));
+				runtime·algequal(&eq, IK(h, k), IK(h, k), t->key);
 				if(eq) {
 					// Check the current hash table for the data.
 					// This code handles the case where the key

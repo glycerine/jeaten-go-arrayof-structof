@@ -77,6 +77,9 @@ typedef	struct	Type		Type;
 typedef	struct	PtrType		PtrType;
 typedef	struct	ChanType		ChanType;
 typedef	struct	MapType		MapType;
+typedef	struct	ArrayType	ArrayType;
+typedef	struct	StructType	StructType;
+typedef	struct	StructField	StructField;
 typedef	struct	Defer		Defer;
 typedef	struct	Panic		Panic;
 typedef	struct	Hmap		Hmap;
@@ -691,6 +694,12 @@ void	runtime·strcopy(uintptr, void*, void*);
 void	runtime·algslicecopy(uintptr, void*, void*);
 void	runtime·intercopy(uintptr, void*, void*);
 void	runtime·nilintercopy(uintptr, void*, void*);
+
+/*
+ * Alg wrappers that handle nil hash|equal using generic algorithms
+ */
+void	runtime·alghash(uintptr*, void*, Type*);
+void	runtime·algequal(bool*, void*, void*, Type*);
 
 /*
  * deferred subroutine calls

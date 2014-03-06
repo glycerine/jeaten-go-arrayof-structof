@@ -100,3 +100,26 @@ struct PtrType
 	Type;
 	Type *elem;
 };
+
+struct ArrayType
+{
+	Type;
+	Type *elem;
+	Type *slice;
+	uintptr len;
+};
+
+struct StructType
+{
+	Type;
+	Slice fields;
+};
+
+struct StructField
+{
+	String *name;
+	String *pkgPath;
+	Type *typ;
+	String *tag;
+	uintptr offset;
+};
