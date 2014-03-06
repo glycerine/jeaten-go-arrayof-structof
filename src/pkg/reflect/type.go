@@ -248,7 +248,7 @@ type rtype struct {
 	align         uint8          // alignment of variable with this type
 	fieldAlign    uint8          // alignment of struct field with this type
 	kind          uint8          // enumeration for C
-	alg           *uintptr       // algorithm table (../runtime/runtime.h:/Alg)
+	alg           *algTable      // algorithm table (../runtime/runtime.h:/Alg)
 	gc            unsafe.Pointer // garbage collection data
 	string        *string        // string form; unnecessary but undeniably useful
 	*uncommonType                // (relatively) uncommon fields
@@ -1745,10 +1745,7 @@ func SliceOf(t Type) Type {
 //
 // If the resulting type would be larger than the available address space,
 // ArrayOf panics.
-//
-// TODO(rsc): Unexported for now. Export once the alg field is set correctly
-// for the type. This may require significant work.
-func arrayOf(count int, elem Type) Type {
+func ArrayOf(count int, elem Type) Type {
 	typ := elem.(*rtype)
 	slice := SliceOf(elem)
 
@@ -1786,13 +1783,29 @@ func arrayOf(count int, elem Type) Type {
 	array.size = typ.size * uintptr(count)
 	array.align = typ.align
 	array.fieldAlign = typ.fieldAlign
-	// TODO: array.alg
-	// TODO: array.gc
 	array.uncommonType = nil
 	array.ptrToThis = nil
 	array.zero = unsafe.Pointer(&make([]byte, array.size)[0])
 	array.len = uintptr(count)
 	array.slice = slice.(*rtype)
+
+	gc := []uintptr{array.size}
+	if typ.kind&kindNoPointers == 0 {
+		gc = append(gc, _GC_ARRAY_START, 0, uintptr(count), typ.size)
+		gc = appendGCProgram(gc, typ)
+		gc = append(gc, _GC_ARRAY_NEXT)
+	}
+	gc = append(gc, _GC_END)
+	array.gc = unsafe.Pointer(&gc[0])
+
+	compare := comparable(typ)
+	continuous := compare && (typ.size % uintptr(typ.align) == 0) && memalg(typ)
+	array.alg = algForType(&array.rtype, compare, continuous)
+
+	// INCORRECT. Uncomment to check that TestArrayOfGC fails when slice.gc is wrong.
+	//array.gc = unsafe.Pointer(&badGC{width: 0, end: _GC_END})
+	// INCORRECT. Uncomment to check that TestArrayOfCustomAlg fails when alg is wrong.
+	//array.alg = algForMemType(&array.rtype, compare, true)
 
 	return cachePut(ckey, &array.rtype)
 }
