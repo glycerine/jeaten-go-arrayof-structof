@@ -3188,6 +3188,80 @@ func TestArrayOf(t *testing.T) {
 	checkSameType(t, Zero(ArrayOf(5, TypeOf(T(1)))).Interface(), [5]T{})
 }
 
+func TestArrayOfGC(t *testing.T) {
+	type T *uintptr
+	tt := TypeOf(T(nil))
+	const n = 100
+	var x []interface{}
+	for i := 0; i < n; i++ {
+		v := New(ArrayOf(n, tt)).Elem()
+		for j := 0; j < v.Len(); j++ {
+			p := new(uintptr)
+			*p = uintptr(i*n + j)
+			v.Index(j).Set(ValueOf(p).Convert(tt))
+		}
+		x = append(x, v.Interface())
+	}
+	runtime.GC()
+
+	for i, xi := range x {
+		v := ValueOf(xi)
+		for j := 0; j < v.Len(); j++ {
+			k := v.Index(j).Elem().Interface()
+			if k != uintptr(i*n+j) {
+				t.Errorf("lost x[%d][%d] = %d, want %d", i, j, k, i*n+j)
+			}
+		}
+	}
+}
+
+func TestArrayOfAlg(t *testing.T) {
+	at := ArrayOf(6, TypeOf(byte(0)))
+	v1 := New(at).Elem()
+	v2 := New(at).Elem()
+	if v1.Interface() != v1.Interface() {
+		t.Errorf("constructed array %v not equal to itself", v1.Interface())
+	}
+	v1.Index(5).Set(ValueOf(byte(1)))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 == i2 {
+		t.Errorf("constructed arrays %v and %v should not be equal", i1, i2)
+	}
+
+	at = ArrayOf(6, TypeOf([]int(nil)))
+	v1 = New(at).Elem()
+	shouldPanic(func() { _ = v1.Interface() == v1.Interface() })
+}
+
+func TestArrayOfCustomAlg(t *testing.T) {
+	at1 := ArrayOf(5, TypeOf(string("")))
+	at := ArrayOf(6, at1)
+	v1 := New(at).Elem()
+	v2 := New(at).Elem()
+	if v1.Interface() != v1.Interface() {
+		t.Errorf("constructed array %v not equal to itself", v1.Interface())
+	}
+
+	v1.Index(0).Index(0).Set(ValueOf("abc"))
+	v2.Index(0).Index(0).Set(ValueOf("efg"))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 == i2 {
+		t.Errorf("constructed arrays %v and %v should not be equal", i1, i2)
+	}
+
+	v1.Index(0).Index(0).Set(ValueOf("abc"))
+	v2.Index(0).Index(0).Set(ValueOf((v1.Index(0).Index(0).String()+" ")[:3]))
+	if i1, i2 := v1.Interface(), v2.Interface(); i1 != i2 {
+		t.Errorf("constructed arrays %v and %v should be equal", i1, i2)
+	}
+
+	// Test hash
+	m := MakeMap(MapOf(at, TypeOf(int(0))))
+	m.SetMapIndex(v1, ValueOf(1))
+	if i1, i2 := v1.Interface(), v2.Interface(); m.MapIndex(v2).Interface() != 1 {
+		t.Errorf("constructed arrays %v and %v have different hashes", i1, i2)
+	}
+}
+
+
 func TestSliceOf(t *testing.T) {
 	// check construction and use of type not in binary
 	type T int
