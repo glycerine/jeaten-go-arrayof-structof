@@ -15,6 +15,7 @@ import (
 	. "reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3327,6 +3328,34 @@ func TestSliceOfGC(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestFuncOf(t *testing.T) {
+	// check construction and use of type not in binary
+	type T string
+	ft := FuncOf([]Type{TypeOf(T(0))}, []Type{TypeOf(T(0))}, false)
+	v := MakeFunc(ft, func(in []Value) []Value {
+		return []Value{ValueOf(T(in[0].String() + "def"))}
+	})
+	abcdef := v.Call([]Value{ValueOf("abc")})[0]
+	if abcdef.Interface() != T("abcdef") {
+		t.Errorf("construct fn call returned %s, expected \"abcdef\"", strconv.Quote(abcdef.String()))
+	}
+
+	nodotdotdot := FuncOf([]Type{SliceOf(TypeOf(T(0)))}, nil, false)
+	dotdotdot := FuncOf([]Type{SliceOf(TypeOf(T(0)))}, nil, true)
+
+	// check that type already in binary is found
+	checkSameType(t, Zero(dotdotdot).Interface(), (func(...T))(nil))
+
+	// check that ... results in different type something
+	if dotdotdot == nodotdotdot {
+		t.Errorf("types %v %v should not be equal", nodotdotdot, dotdotdot)
+	}
+
+	// check that ... without last arg with slice type panics
+	shouldPanic(func() { FuncOf([]Type{TypeOf(T(0))}, nil, true) })
+	shouldPanic(func() { FuncOf(nil, nil, true) })
 }
 
 func TestChanOf(t *testing.T) {
