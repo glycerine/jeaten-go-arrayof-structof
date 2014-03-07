@@ -1156,6 +1156,7 @@ ok:
 		switch(t->etype) {
 		case TARRAY:
 		case TCHAN:
+		case TFUNC:
 		case TMAP:
 		case TSTRUCT:
 			slink = typelinksym(t);

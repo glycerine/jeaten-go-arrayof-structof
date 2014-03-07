@@ -1123,6 +1123,11 @@ func fnv1(x uint32, list ...byte) uint32 {
 	return x
 }
 
+// fnv1SumHash incorporates the four bytes of hash into the hash x using fnv1().
+func fnv1SumHash(x uint32, hash uint32) uint32 {
+	return fnv1(x, byte(hash>>24), byte(hash>>16), byte(hash>>8), byte(hash))
+}
+
 func (t *rtype) Implements(u Type) bool {
 	if u == nil {
 		panic("reflect: nil type passed to Type.Implements")
@@ -1422,6 +1427,93 @@ func cachePut(k cacheKey, t *rtype) Type {
 	lookupCache.Unlock()
 	return t
 }
+
+// FuncOf returns the function type described by its inputs and outputs.
+// If dotdotdot is true, the last input must be a slice and the resulting
+// function type is variadic.
+func FuncOf(in, out []Type, dotdotdot bool) Type {
+	// Make func type.
+	var ifn interface{} = func() {}
+	prototype := *(**funcType)(unsafe.Pointer(&ifn))
+	fn := new(funcType)
+	*fn = *prototype
+	fn.dotdotdot = dotdotdot
+
+	hash := uint32(0)
+	if dotdotdot {
+		hash = fnv1(hash, '.')
+		if len(in) == 0 || in[0].Kind() != Slice || in[0].Name() != "" {
+			panic("last input of a variadic function must be a slice")
+		}
+	}
+
+	// Compute the string rep and hash
+	str := "func("
+	for i := range in {
+		typ := in[i].(*rtype)
+		fn.in = append(fn.in, typ)
+
+		if dotdotdot && i == len(in) - 1 {
+			str += "..." + *(*sliceType)(unsafe.Pointer(typ)).elem.string
+		} else {
+			str += *typ.string
+		}
+		hash = fnv1SumHash(hash, typ.hash)
+		if i < len(in) - 1 {
+			str += ", "
+		}
+	}
+	str += ")"
+	// Mark the boundary between ins and outs
+	hash = fnv1(hash, '.')
+	outStr := ""
+	for i := range out {
+		typ := out[i].(*rtype)
+		fn.out = append(fn.out, typ)
+
+		hash = fnv1SumHash(hash, typ.hash)
+		outStr += *typ.string
+		if i < len(out) - 1 {
+			outStr += ", "
+		}
+	}
+	if len(out) == 1 {
+		str += " " + outStr
+	} else if len(out) > 1 {
+		str += " (" + outStr + ")"
+	}
+	fn.string = &str
+	fn.hash = hash
+
+	k := cacheKey{Func, nil, nil, uintptr(hash)}
+	if len(fn.in) != 0 {
+		k.t1 = fn.in[0]
+	}
+	if len(fn.out) != 0 {
+		k.t2 = fn.out[0]
+	}
+
+	// Look in cache.
+	for _, t := range cacheGets(k) {
+		if haveIdenticalUnderlyingType(&fn.rtype, t) {
+			return t
+		}
+	}
+
+	// Look in known types.
+	for _, t := range typesByString(str) {
+		if haveIdenticalUnderlyingType(&fn.rtype, t) {
+			return cachePut(k, t)
+		}
+	}
+
+	fn.uncommonType = nil
+	fn.ptrToThis = nil
+	fn.zero = unsafe.Pointer(&make([]byte, fn.size)[0])
+
+	return cachePut(k, &fn.rtype)
+}
+
 
 // garbage collection bytecode program for chan.
 // See ../../cmd/gc/reflect.c:/^dgcsym1 and :/^dgcsym.
