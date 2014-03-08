@@ -3358,6 +3358,64 @@ func TestFuncOf(t *testing.T) {
 	shouldPanic(func() { FuncOf(nil, nil, true) })
 }
 
+func TestInterfaceOf(t *testing.T) {
+	// check construction and use of type not in binary
+	type T string
+	it := InterfaceOf([]Method{
+		Method{
+			Type: TypeOf(func() T { return "" }),
+			Name: "Y",
+		},
+		Method{
+			Type: TypeOf(func() T { return "" }),
+			Name: "X",
+		},
+	})
+
+	type I1 interface {
+		X() T
+	}
+
+	type I2 interface {
+		Z() T
+	}
+
+	i1t := TypeOf(new(I1)).Elem()
+	i2t := TypeOf(new(I2)).Elem()
+	if !it.Implements(i1t) {
+		t.Errorf("constructed interface %v does not implement %v", it, i1t)
+	}
+	if it.Implements(i2t) {
+		t.Errorf("constructed interface %v should not implement %v", it, i2t)
+	}
+
+	// check that type already in binary is found
+	emptyConstructed := InterfaceOf(nil)
+	emptyCompiled := TypeOf(new(interface{})).Elem()
+	if emptyConstructed != emptyCompiled {
+		t.Errorf("did not find preexisting type for %s (vs %s)", emptyConstructed, emptyCompiled)
+	}
+	zConstructed := InterfaceOf([]Method{{Name: "Z", Type: TypeOf(func() T { return "" })}})
+	zCompiled := TypeOf(new(interface{Z() T})).Elem()
+	if zConstructed != zCompiled {
+		t.Errorf("did not find preexisting type for %s (vs %s)", zConstructed, zCompiled)
+	}
+
+	// check that listing duplicate methods fails
+	shouldPanic(func() {
+		InterfaceOf([]Method{
+			Method{Name: "X", Type: TypeOf(func() {})},
+			Method{Name: "X", Type: TypeOf(func() {})},
+		})
+	})
+	shouldPanic(func() {
+		InterfaceOf([]Method{
+			Method{Name: "x", PkgPath: "pkg", Type: TypeOf(func() {})},
+			Method{Name: "x", PkgPath: "pkg", Type: TypeOf(func() {})},
+		})
+	})
+}
+
 func TestChanOf(t *testing.T) {
 	// check construction and use of type not in binary
 	type T string

@@ -1157,6 +1157,7 @@ ok:
 		case TARRAY:
 		case TCHAN:
 		case TFUNC:
+		case TINTER:
 		case TMAP:
 		case TSTRUCT:
 			slink = typelinksym(t);
