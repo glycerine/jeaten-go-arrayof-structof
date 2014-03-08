@@ -2187,6 +2187,69 @@ func ArrayOf(count int, elem Type) Type {
 	return cachePut(ckey, &array.rtype)
 }
 
+//  
+// Name returns a new Type with with the same underlying type as t but named according to
+// name and pkgPath. A new type is returned reguardless of whether a type with the
+// same name already exists, i.e.
+//
+//  Name(t, "x", "pkg") != Name(t, "x", "pkg")
+//
+func Name(t Type, pkgPath, name string) Type {
+	if pkgPath == "" || name == "" {
+		panic("both pkgPath and name are required to in type names")
+	}
+	var named, old *rtype
+	old = t.(*rtype)
+
+	switch t.Kind() {
+	default:
+		clone := *old
+		named = &clone
+
+	case Array:
+		clone := **(**arrayType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Chan:
+		clone := **(**arrayType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Func:
+		clone := **(**funcType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Interface:
+		clone := **(**interfaceType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Map:
+		clone := **(**mapType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Ptr:
+		clone := **(**ptrType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Slice:
+		clone := **(**sliceType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+
+	case Struct:
+		clone := **(**structType)(unsafe.Pointer(&old))
+		named = &clone.rtype
+	}
+
+	named.uncommonType = &uncommonType{
+		name: &name,
+		pkgPath: &pkgPath,
+		methods: make([]method, 0),
+	}
+	str := shortPkgName(pkgPath)+"."+name
+	named.string = &str
+
+	return toType(named)
+}
+
 // toType converts from a *rtype to a Type that can be returned
 // to the client of package reflect. In gc, the only concern is that
 // a nil *rtype must be replaced by a nil Type, but in gccgo this
