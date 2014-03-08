@@ -17,7 +17,9 @@ package reflect
 
 import (
 	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -315,10 +317,13 @@ type imethod struct {
 	typ     *rtype  // .(*FuncType) underneath
 }
 
+// Sortable slice of imethds as sorted by the compiler
+type imethods []imethod
+
 // interfaceType represents an interface type.
 type interfaceType struct {
 	rtype   `reflect:"interface"`
-	methods []imethod // sorted by hash
+	methods []imethod // sorted by name+pkgPath, see imethods.Less
 }
 
 // mapType represents a map type.
@@ -1182,10 +1187,17 @@ func implements(T, V *rtype) bool {
 		for j := 0; j < len(v.methods); j++ {
 			tm := &t.methods[i]
 			vm := &v.methods[j]
-			if vm.name == tm.name && vm.pkgPath == tm.pkgPath && vm.typ == tm.typ {
-				if i++; i >= len(t.methods) {
-					return true
-				}
+			if tm.name != vm.name && *tm.name != *vm.name {
+				continue
+			}
+			if tm.pkgPath != vm.pkgPath && (tm.pkgPath == nil || vm.pkgPath == nil || *tm.pkgPath != *vm.pkgPath) {
+				continue
+			}
+			if tm.typ != vm.typ {
+				continue
+			}
+			if i++; i >= len(t.methods) {
+				return true
 			}
 		}
 		return false
@@ -1199,10 +1211,17 @@ func implements(T, V *rtype) bool {
 	for j := 0; j < len(v.methods); j++ {
 		tm := &t.methods[i]
 		vm := &v.methods[j]
-		if vm.name == tm.name && vm.pkgPath == tm.pkgPath && vm.mtyp == tm.typ {
-			if i++; i >= len(t.methods) {
-				return true
-			}
+		if tm.name != vm.name && *tm.name != *vm.name {
+			continue
+		}
+		if tm.pkgPath != vm.pkgPath && (tm.pkgPath == nil || vm.pkgPath == nil || *tm.pkgPath != *vm.pkgPath) {
+			continue
+		}
+		if tm.typ != vm.mtyp {
+			continue
+		}
+		if i++; i >= len(t.methods) {
+			return true
 		}
 	}
 	return false
@@ -1396,7 +1415,7 @@ func cacheGet(k cacheKey) *rtype {
 }
 
 // cacheGets looks for all types under the key k in the lookupCache.
-// Used only by StructOf which uses keys that could potentially collide.
+// Used by StructOf/FuncOf/InterfaceOf which use keys that could potentially collide.
 func cacheGets(k cacheKey) []*rtype {
 	lookupCache.RLock()
 	ts := lookupCache.m[k]
@@ -1841,6 +1860,100 @@ func SliceOf(t Type) Type {
 	return cachePut(ckey, &slice.rtype)
 }
 
+// InterfaceOf returns the interface type containing methods.
+func InterfaceOf(methods []Method) Type {
+	hash := fnv1(0, []byte("iface")...)
+
+	ms := make(imethods, len(methods))
+	str := "interface {"
+
+	type mkey struct {
+		name string
+		pkgPath string
+	}
+
+	seen := make(map[mkey] bool)
+	for i := range ms {
+		m := runtimeIMethod(methods[i])
+
+		mk := mkey{name: *m.name}
+		name := ""
+		if m.pkgPath != nil {
+			name = shortPkgName(*m.pkgPath) + "."
+			mk.pkgPath = *m.pkgPath
+			hash = fnv1(hash, []byte(*m.pkgPath)...)
+		}
+		name += *m.name
+		if seen[mk] {
+			panic("duplicate method "+name+".")
+		}
+		seen[mk] = true
+		str += " " + name
+		hash = fnv1(hash, []byte(*m.name)...)
+
+		// Copy the type signature, but skip the leading func
+		str += (*m.typ.string)[len("func"):]
+		hash = fnv1SumHash(hash, m.typ.hash)
+
+		if i < len(methods) - 1 {
+			str += ";"
+		} else {
+			str += " "
+		}
+		ms[i] = m
+	}
+	str += "}"
+	sort.Sort(ms)
+
+	// Make the interface type.
+	var iiface interface{} = new(interface{})
+	prototype := (*interfaceType)(unsafe.Pointer((*(**ptrType)(unsafe.Pointer(&iiface))).elem))
+	iface := new(interfaceType)
+	*iface = *prototype
+	iface.methods = ms
+
+	// Create a key, there is possibility of a hash collision here.
+	k := cacheKey{Interface, nil, nil, uintptr(hash)}
+	switch len(ms) {
+	case 2:
+		k.t1 = ms[1].typ
+		fallthrough
+	case 1:
+		k.t2 = ms[0].typ
+	}
+
+	// Look in the cache.
+	for _, tt := range cacheGets(k) {
+		i := *(**interfaceType)(unsafe.Pointer(&tt))
+		if len(ms) == len(i.methods) && implements(&i.rtype, &iface.rtype) {
+			return tt
+		}
+	}
+
+	// Look in known types.
+	for _, tt := range typesByString(str) {
+		i := *(**interfaceType)(unsafe.Pointer(&tt))
+		if len(ms) == len(i.methods) && implements(&i.rtype, &iface.rtype) {
+			return cachePut(k, tt)
+		}
+	}
+
+	iface.string = &str
+	iface.hash = hash
+	iface.uncommonType = nil
+	iface.zero = unsafe.Pointer(&make([]byte, iface.size)[0])
+	iface.ptrToThis = nil
+
+	return cachePut(k, &iface.rtype)
+}
+
+func runtimeIMethod(method Method) imethod {
+	return imethod{
+		name: strPtrOrNil(method.Name),
+		pkgPath: strPtrOrNil(method.PkgPath),
+		typ: method.Type.(*rtype),
+	}
+}
 
 // StructOf returns the struct type containing fields. Field offsets are ignored
 // and computed as they would be by the compiler.
@@ -2175,4 +2288,31 @@ func funcLayout(t *rtype, rcvr *rtype) *rtype {
 	layoutCache.m[k] = x
 	layoutCache.Unlock()
 	return x
+}
+
+func shortPkgName(pkgPath string) string {
+	i := strings.LastIndex(pkgPath, "/")
+	if i != -1 {
+		return pkgPath[i+1:]
+	}
+	return pkgPath
+}
+
+func (ms imethods) Less(i, j int) bool {
+	a := ms[i]
+	b := ms[j]
+	if *a.name != *b.name {
+		return *a.name < *b.name
+	} else {
+		// Duplicate names can only occur if pkgPath is not nil
+		return *a.pkgPath < *a.pkgPath
+	}
+}
+
+func (ms imethods) Swap(i, j int) {
+	ms[i], ms[j] = ms[j], ms[i]
+}
+
+func (ms imethods) Len() int {
+	return len(ms)
 }
