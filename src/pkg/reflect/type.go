@@ -2196,7 +2196,7 @@ func ArrayOf(count int, elem Type) Type {
 //
 func Name(t Type, pkgPath, name string) Type {
 	if pkgPath == "" || name == "" {
-		panic("both pkgPath and name are required to in type names")
+		panic("both pkgPath and name are required in type names")
 	}
 	var named, old *rtype
 	old = t.(*rtype)
