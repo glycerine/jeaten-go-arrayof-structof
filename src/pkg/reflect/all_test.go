@@ -4014,3 +4014,23 @@ func TestFieldByIndexNil(t *testing.T) {
 
 	t.Fatalf("did not panic")
 }
+
+func TestNameType(t *testing.T) {
+	common := TypeOf(1)
+	named := Name(common, "main", "X")
+	if named.PkgPath() != "main" {
+		t.Error("Wrong package path for named type, '%s' (vs 'main')", named.PkgPath())
+	}
+	if named.Name() != "X" {
+		t.Error("Wrong name for named type, '%s' (vs 'X')", named.Name())
+	}
+	if named.String() != "main.X" {
+		t.Error("Wrong string for named type, '%s' (vs 'main.X')", named.PkgPath())
+	}
+
+	named2 := Name(common, "main", "X")
+	if named == named2 {
+		t.Error("Name called with previous args did not create new type")
+	}
+	shouldPanic(func() { Name(common, "", "") })
+}
