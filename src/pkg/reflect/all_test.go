@@ -3395,8 +3395,11 @@ func TestInterfaceOf(t *testing.T) {
 	if emptyConstructed != emptyCompiled {
 		t.Errorf("did not find preexisting type for %s (vs %s)", emptyConstructed, emptyCompiled)
 	}
-	zConstructed := InterfaceOf([]Method{{Name: "Z", Type: TypeOf(func() T { return "" })}})
-	zCompiled := TypeOf(new(interface{Z() T})).Elem()
+	zConstructed := InterfaceOf([]Method{
+		Method{Name: "Z", Type: TypeOf(func() T { return "" })},
+		Method{Name: "z", PkgPath: "reflect_test", Type: TypeOf(func() T { return "" })},
+	})
+	zCompiled := TypeOf(new(interface{Z() T; z() T})).Elem()
 	if zConstructed != zCompiled {
 		t.Errorf("did not find preexisting type for %s (vs %s)", zConstructed, zCompiled)
 	}
@@ -3413,6 +3416,18 @@ func TestInterfaceOf(t *testing.T) {
 			Method{Name: "x", PkgPath: "pkg", Type: TypeOf(func() {})},
 			Method{Name: "x", PkgPath: "pkg", Type: TypeOf(func() {})},
 		})
+	})
+	shouldPanic(func() {
+		// Missing package path for unexported symbol
+		InterfaceOf([]Method{Method{Name: "x", Type: TypeOf(func() {})}})
+	})
+	shouldPanic(func() {
+		// Missing name
+		InterfaceOf([]Method{Method{Type: TypeOf(func() {})}})
+	})
+	shouldPanic(func() {
+		// Non-func method type
+		InterfaceOf([]Method{Method{Type: TypeOf("")}})
 	})
 }
 
