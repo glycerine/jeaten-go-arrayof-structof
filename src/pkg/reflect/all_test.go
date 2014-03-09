@@ -3645,6 +3645,25 @@ func TestStructOf(t *testing.T) {
 		}
 	}
 
+	// check duplicate names
+	shouldPanic(func() {
+		StructOf([]StructField{
+			StructField{Name: "string", Type: TypeOf("")},
+			StructField{Name: "string", Type: TypeOf("")},
+		})
+	})
+	shouldPanic(func() {
+		StructOf([]StructField{
+			StructField{Type: TypeOf("")},
+			StructField{Name: "string", Type: TypeOf("")},
+		})
+	})
+	shouldPanic(func() {
+		StructOf([]StructField{
+			StructField{Type: TypeOf("")},
+			StructField{Type: TypeOf("")},
+		})
+	})
 	// check that type already in binary is found
 	checkSameType(t, Zero(StructOf(fields[1:2])).Interface(), struct{Y uint64}{})
 }
