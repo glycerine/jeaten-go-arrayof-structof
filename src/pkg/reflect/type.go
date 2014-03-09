@@ -1987,15 +1987,36 @@ func StructOf(fields []StructField) Type {
 
 	fs := make([]structField, len(fields))
 	str := "struct {"
+	seen := make(map[string]bool)
 	for i := range fields {
 		f := runtimeStructField(fields[i])
 
+		name := ""
 		// Update string and hash
 		if f.name != nil {
 			hash = fnv1(hash, []byte(*f.name)...)
 			str += " " + *f.name
+			name = *f.name
+		} else {
+			// Embedded field
+			if f.typ.Kind() == Ptr {
+				// Embedded ** and *interface{} are illegal
+				elem := f.typ.Elem()
+				if k := elem.Kind(); k == Ptr || k == Interface {
+					panic("illegal anonymous field type "+*f.typ.string)
+				}
+				name = elem.String()
+			} else {
+				name = *f.typ.string
+			}
+			// TODO(crc) check for syntacticly impossible type names?
 		}
-		hash = fnv1(hash, []byte(*f.typ.string)...)
+		if seen[name] {
+			panic("duplicate field "+name)
+		}
+		seen[name] = true
+
+		hash = fnv1SumHash(hash, f.typ.hash)
 		str += " " + *f.typ.string
 		if f.tag != nil {
 			hash = fnv1(hash, []byte(*f.tag)...)
