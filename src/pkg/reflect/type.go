@@ -1898,7 +1898,7 @@ func InterfaceOf(methods []Method) Type {
 		}
 		name += *m.name
 		if seen[mk] {
-			panic("duplicate method "+name+".")
+			panic("duplicate method "+name)
 		}
 		seen[mk] = true
 		str += " " + name
