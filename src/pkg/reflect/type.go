@@ -2259,6 +2259,8 @@ func Name(t Type, pkgPath, name string) Type {
 	}
 	str := shortPkgName(pkgPath)+"."+name
 	named.string = &str
+	named.ptrToThis = nil
+	named.ptrToThis = named.ptrTo()
 
 	return toType(named)
 }
