@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -1864,7 +1866,8 @@ func SliceOf(t Type) Type {
 func InterfaceOf(methods []Method) Type {
 	hash := fnv1(0, []byte("iface")...)
 
-	ms := make(imethods, len(methods))
+	// methods slice must not be nil
+	ms := imethods{}
 	str := "interface {"
 
 	type mkey struct {
@@ -1873,8 +1876,18 @@ func InterfaceOf(methods []Method) Type {
 	}
 
 	seen := make(map[mkey] bool)
-	for i := range ms {
+	for i := range methods {
 		m := runtimeIMethod(methods[i])
+
+		if m.typ.Kind() != Func {
+			panic("non-func method type")
+		}
+		if m.name == nil {
+			panic("illegal anonymous method")
+		}
+		if m.pkgPath == nil && !isExported(*m.name) {
+			panic("unexported method "+*m.name+" missing package path")
+		}
 
 		mk := mkey{name: *m.name}
 		name := ""
@@ -1900,7 +1913,7 @@ func InterfaceOf(methods []Method) Type {
 		} else {
 			str += " "
 		}
-		ms[i] = m
+		ms = append(ms, m)
 	}
 	str += "}"
 	sort.Sort(ms)
@@ -2351,6 +2364,11 @@ func funcLayout(t *rtype, rcvr *rtype) *rtype {
 	layoutCache.m[k] = x
 	layoutCache.Unlock()
 	return x
+}
+
+func isExported(name string) bool {
+	r, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(r)
 }
 
 func shortPkgName(pkgPath string) string {
