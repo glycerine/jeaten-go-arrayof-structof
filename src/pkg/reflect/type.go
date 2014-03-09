@@ -2226,7 +2226,7 @@ func ArrayOf(count int, elem Type) Type {
 // name and pkgPath. A new type is returned reguardless of whether a type with the
 // same name already exists, i.e.
 //
-//  Name(t, "x", "pkg") != Name(t, "x", "pkg")
+//	Name(t, "x", "pkg") != Name(t, "x", "pkg")
 //
 func Name(t Type, pkgPath, name string) Type {
 	if pkgPath == "" || name == "" {
