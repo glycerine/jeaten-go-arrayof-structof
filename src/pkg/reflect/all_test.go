@@ -4042,6 +4042,12 @@ func TestNameType(t *testing.T) {
 	if named.String() != "main.X" {
 		t.Error("Wrong string for named type, '%s' (vs 'main.X')", named.PkgPath())
 	}
+	if Zero(named).Type() != named {
+		t.Error("Wrong zero value for named type")
+	}
+	if New(named).Type() != PtrTo(named) {
+		t.Error("Wrong new value for named type")
+	}
 
 	named2 := Name(common, "main", "X")
 	if named == named2 {
