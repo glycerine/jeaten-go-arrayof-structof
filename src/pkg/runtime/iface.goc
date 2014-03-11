@@ -10,6 +10,16 @@ package runtime
 #include "malloc.h"
 #include "../../cmd/ld/textflag.h"
 
+static int32
+namecmp(String *a, String *b)
+{
+	uintptr n;
+	if(a == b)
+		return 0;
+	n = a->len < b->len ? a->len : b->len;
+	return runtime·strncmp(a->str, b->str, n);
+}
+
 func printiface(i Iface) {
 	runtime·printf("(%p,%p)", i.tab, i.data);
 }
@@ -45,7 +55,7 @@ itab(InterfaceType *inter, Type *type, int32 canfail)
 	if(x == nil) {
 		if(canfail)
 			return nil;
-		iname = inter->m[0].name;
+		iname = ((IMethod *)inter->mhdr.array)[0].name;
 		goto throw;
 	}
 
@@ -92,9 +102,9 @@ search:
 	// and interface names are unique,
 	// so can iterate over both in lock step;
 	// the loop is O(ni+nt) not O(ni*nt).
-	i = inter->m;
+	i = (IMethod *)inter->mhdr.array;
 	ei = i + inter->mhdr.len;
-	t = x->m;
+	t = (Method *)x->mhdr.array;
 	et = t + x->mhdr.len;
 	for(; i < ei; i++) {
 		itype = i->type;
@@ -116,11 +126,11 @@ search:
 				m->bad = 1;
 				goto out;
 			}
-			if(t->mtyp == itype && t->name == iname && t->pkgPath == ipkgPath)
+			if(t->mtyp == itype && namecmp(t->name, iname) == 0 && namecmp(t->pkgPath, ipkgPath) == 0)
 				break;
 		}
 		if(m)
-			m->fun[i - inter->m] = t->ifn;
+			m->fun[i - (IMethod *)inter->mhdr.array] = t->ifn;
 	}
 
 out:

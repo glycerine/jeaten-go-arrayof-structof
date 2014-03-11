@@ -1956,6 +1956,7 @@ func InterfaceOf(methods []Method) Type {
 	iface.uncommonType = nil
 	iface.zero = unsafe.Pointer(&make([]byte, iface.size)[0])
 	iface.ptrToThis = nil
+	iface.alg = alg(_AINTER)
 
 	return cachePut(k, &iface.rtype)
 }
