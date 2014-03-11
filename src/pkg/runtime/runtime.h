@@ -781,6 +781,7 @@ extern	uintptr	runtime·maxstacksize;
  * common functions and data
  */
 int32	runtime·strcmp(byte*, byte*);
+int32	runtime·strncmp(byte*, byte*, uintptr);
 byte*	runtime·strstr(byte*, byte*);
 intgo	runtime·findnull(byte*);
 intgo	runtime·findnullw(uint16*);
