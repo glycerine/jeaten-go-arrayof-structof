@@ -605,14 +605,14 @@ deadcode(void)
 	for(i=0; i<ndynexp; i++)
 		mark(dynexp[i]);
 
-	markflood();
-	
-	// keep each beginning with 'typelink.' if the symbol it points at is being kept.
+	// keep each beginning with 'typelink.'
 	for(s = ctxt->allsym; s != S; s = s->allsym) {
 		if(strncmp(s->name, "go.typelink.", 12) == 0)
-			s->reachable = s->nr==1 && s->r[0].sym->reachable;
+			mark(s);
 	}
 
+	markflood();
+	
 	// remove dead text but keep file information (z symbols).
 	last = nil;
 	for(s = ctxt->textp; s != nil; s = s->next) {
