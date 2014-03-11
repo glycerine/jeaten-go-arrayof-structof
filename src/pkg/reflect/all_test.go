@@ -3431,6 +3431,32 @@ func TestInterfaceOf(t *testing.T) {
 	})
 }
 
+type InterfaceTestInt int
+func (x InterfaceTestInt) Ident() InterfaceTestInt {
+	return x
+}
+
+// This tests that the func type of InterfaceOfX.X is included in .typelink
+// even though it is not refered to by any compiled symbols. It also tests
+// the creation of an itab from a constructed interface.
+func TestInterfaceOfContainingCompiledMethodType(t *testing.T) {
+	ft := FuncOf(nil, []Type{TypeOf(InterfaceTestInt(0))}, false)
+	expected := ValueOf(InterfaceTestInt(0)).MethodByName("Ident").Type()
+	if ft != expected {
+		t.Errorf("constructed func type '%v' is duplicate of compiled type '%v'", ft, expected)
+	}
+	// check construction and use of type not in binary
+	it := InterfaceOf([]Method{
+		Method{
+			Type: ft,
+			Name: "Ident",
+		},
+	})
+	// test Set does not panic
+	i := New(it).Elem()
+	i.Set(ValueOf(InterfaceTestInt(0)))
+}
+
 func TestChanOf(t *testing.T) {
 	// check construction and use of type not in binary
 	type T string
